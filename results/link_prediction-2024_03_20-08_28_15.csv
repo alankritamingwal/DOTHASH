@@ -1,0 +1,5 @@
+method,dataset,,hits@20,hits@50,hits@100,init_time,calc_time,num_node_pairs,device
+jaccard,ogbl-ddi,,0,0.000726652,0.048565799,1.4197751,4.4929399,229088,cpu
+dothash,ogbl-ddi,,0,7.89E-03,0.9747,2.74,0.328,229088,cpu
+minhash,ogbl-ddi,,0,0.0008015,0.0411,66.16,11.698,229088,cpu
+simhash,ogbl-ddi,,0,0.00065,0.00068,0.001295,22.4313,229088,cpu
