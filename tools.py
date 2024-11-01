@@ -11,6 +11,15 @@ import torch
 import torchhd
 from torch import LongTensor, Tensor
 import scipy.sparse as ssp
+import matplotlib as plt
+from sklearn.metrics.pairwise import cosine_similarity
+from scipy.spatial import distance
+from sklearn.manifold import TSNE
+import matplotlib.pyplot as plt
+import numpy as np
+from sklearn.decomposition import PCA
+
+
 
 
 # The size of a hash value in number of bytes
@@ -30,16 +39,79 @@ def to_scipy_csr_array(edge_index, num_nodes, values):
 def dot(input: DenseOrSparse, other: DenseOrSparse) -> Tensor:
     return torch.as_tensor((input * other).sum(-1), dtype=torch.float)
 
-    
+
 def dot_jaccard(
     set_a: DenseOrSparse,
     set_b: DenseOrSparse,
     size_a: Tensor,
     size_b: Tensor,
     eps: float = 1e-8,
-):
-    size_i = dot(set_a, set_b)
-    return size_i / (size_a + size_b - size_i + eps)
+
+
+):#############################changes made ##############################################################################################################################
+    #print("set_a : ", set_a)
+    # print("\n\n\nset_b : ", set_b)
+
+    # Move the tensors to the CPU
+    set_a_cpu = set_a.cpu()
+    set_b_cpu = set_b.cpu()
+
+    # Convert the tensors to NumPy arrays
+    set_a_num = set_a_cpu.numpy()
+    set_b_num = set_b_cpu.numpy()
+
+    #print("size of a:", set_a.shape)
+
+    # Calculate the cosine similarity between the two sets
+    similarity = 1 - distance.cosine(set_a_num.flatten(), set_b_num.flatten())
+
+    print("\n\n degree of linear depenency : ", similarity)
+
+    # Apply PCA for dimensionality reduction
+    pca = PCA(n_components=2)  # Reduced to 2 for visualization
+    transformed_set_a = pca.fit_transform(set_a_num)
+    transformed_set_b = pca.fit_transform(set_b_num)
+
+    # Save the image
+    # Plot the PCA-transformed data
+    plt.figure(figsize=(8, 6))
+    plt.scatter(transformed_set_a[:, 0], transformed_set_a[:, 1], color='blue', label='Set A', alpha=0.6)
+    plt.scatter(transformed_set_b[:, 0], transformed_set_b[:, 1], color='red', label='Set B', alpha=0.6)
+    # Plot the principal component directions as arrows
+    origin = np.mean(np.vstack([transformed_set_a, transformed_set_b]), axis=0)  # Center of the data
+    components = pca.components_
+    # Scale the arrows for better visualization
+    scale_factor = 100  # Adjust this factor based on your data for visual clarity
+    plt.quiver(
+    origin[0], origin[1],
+    components[0, 0] * scale_factor, components[0, 1] * scale_factor,
+    angles='xy', scale_units='xy', scale=1, color='black', label='PCA Component 1'
+    )
+    plt.quiver(
+    origin[0], origin[1],
+    components[1, 0] * scale_factor, components[1, 1] * scale_factor,
+    angles='xy', scale_units='xy', scale=1, color='green', label='PCA Component 2'
+    )
+    # Label and display the plot
+    plt.xlabel('PCA Component 1')
+    plt.ylabel('PCA Component 2')
+    plt.title('PCA Visualization of Sets A and B with Principal Components')
+    plt.legend()
+    plt.grid(True)
+    plt.savefig('PCA_with_lines.png')
+    plt.show()
+    size_i = dot(set_a,set_b)
+    size_f=dot(transformed_set_a,transformed_set_b)
+    
+
+    # Final similarity ratio
+    result = size_f / (size_a + size_b - size_f + eps)
+    size_f= dot( transformed_set_a, transformed_set_b)
+    #print("size intial",size_i)
+    #print("size final",size_f)
+    #return size_f / (size_a + size_b - size_f + eps)
+    return result;
+   
 
 
 def minhash_jaccard(set_a: Tensor, set_b: Tensor) -> Tensor:
