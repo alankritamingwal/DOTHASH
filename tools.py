@@ -1,26 +1,17 @@
-import os
-import itertools
-import operator as op
-import functools
 import contextlib
-from time import perf_counter
 import csv
+import functools
+import itertools
 import math
+import operator as op
+import os
+from time import perf_counter
 from typing import Any, Callable, Dict, Iterable, List, Union
+
+import scipy.sparse as ssp
 import torch
 import torchhd
 from torch import LongTensor, Tensor
-import scipy.sparse as ssp
-import matplotlib as plt
-from sklearn.metrics.pairwise import cosine_similarity
-from scipy.spatial import distance
-from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
-import numpy as np
-from sklearn.decomposition import PCA
-
-
-
 
 # The size of a hash value in number of bytes
 hashvalue_byte_size = 8
@@ -39,79 +30,38 @@ def to_scipy_csr_array(edge_index, num_nodes, values):
 def dot(input: DenseOrSparse, other: DenseOrSparse) -> Tensor:
     return torch.as_tensor((input * other).sum(-1), dtype=torch.float)
 
-
+    
 def dot_jaccard(
     set_a: DenseOrSparse,
     set_b: DenseOrSparse,
     size_a: Tensor,
     size_b: Tensor,
     eps: float = 1e-8,
+):
+    size_i = dot(set_a, set_b)
+    return size_i / (size_a + size_b - size_i + eps)
 
+####-------my added porton--------------######
+def dot_salton(
+    set_a: Tensor, set_b: Tensor, size_a: Tensor, size_b: Tensor, eps=1e-8
+) -> Tensor:
+    intersection = dot(set_a, set_b)  # ≈ |A ∩ B|
+    denominator = torch.sqrt(size_a * size_b + eps)
+    return intersection / denominator
 
-):#############################changes made ##############################################################################################################################
-    #print("set_a : ", set_a)
-    # print("\n\n\nset_b : ", set_b)
+def dot_hdi(
+    set_a: Tensor, set_b: Tensor, size_a: Tensor, size_b: Tensor, eps: float = 1e-8
+) -> Tensor:
+    intersection = dot(set_a, set_b)
+    max_size = torch.max(size_a, size_b)
+    return intersection / (max_size + eps)
 
-    # Move the tensors to the CPU
-    set_a_cpu = set_a.cpu()
-    set_b_cpu = set_b.cpu()
-
-    # Convert the tensors to NumPy arrays
-    set_a_num = set_a_cpu.numpy()
-    set_b_num = set_b_cpu.numpy()
-
-    #print("size of a:", set_a.shape)
-
-    # Calculate the cosine similarity between the two sets
-    similarity = 1 - distance.cosine(set_a_num.flatten(), set_b_num.flatten())
-
-    print("\n\n degree of linear depenency : ", similarity)
-
-    # Apply PCA for dimensionality reduction
-    pca = PCA(n_components=2)  # Reduced to 2 for visualization
-    transformed_set_a = pca.fit_transform(set_a_num)
-    transformed_set_b = pca.fit_transform(set_b_num)
-
-    # Save the image
-    # Plot the PCA-transformed data
-    plt.figure(figsize=(8, 6))
-    plt.scatter(transformed_set_a[:, 0], transformed_set_a[:, 1], color='blue', label='Set A', alpha=0.6)
-    plt.scatter(transformed_set_b[:, 0], transformed_set_b[:, 1], color='red', label='Set B', alpha=0.6)
-    # Plot the principal component directions as arrows
-    origin = np.mean(np.vstack([transformed_set_a, transformed_set_b]), axis=0)  # Center of the data
-    components = pca.components_
-    # Scale the arrows for better visualization
-    scale_factor = 100  # Adjust this factor based on your data for visual clarity
-    plt.quiver(
-    origin[0], origin[1],
-    components[0, 0] * scale_factor, components[0, 1] * scale_factor,
-    angles='xy', scale_units='xy', scale=1, color='black', label='PCA Component 1'
-    )
-    plt.quiver(
-    origin[0], origin[1],
-    components[1, 0] * scale_factor, components[1, 1] * scale_factor,
-    angles='xy', scale_units='xy', scale=1, color='green', label='PCA Component 2'
-    )
-    # Label and display the plot
-    plt.xlabel('PCA Component 1')
-    plt.ylabel('PCA Component 2')
-    plt.title('PCA Visualization of Sets A and B with Principal Components')
-    plt.legend()
-    plt.grid(True)
-    plt.savefig('PCA_with_lines.png')
-    plt.show()
-    size_i = dot(set_a,set_b)
-    size_f=dot(transformed_set_a,transformed_set_b)
-    
-
-    # Final similarity ratio
-    result = size_f / (size_a + size_b - size_f + eps)
-    size_f= dot( transformed_set_a, transformed_set_b)
-    #print("size intial",size_i)
-    #print("size final",size_f)
-    #return size_f / (size_a + size_b - size_f + eps)
-    return result;
-   
+def dot_hpi(
+    set_a: Tensor, set_b: Tensor, size_a: Tensor, size_b: Tensor, eps: float = 1e-8
+) -> Tensor:
+    intersection = dot(set_a, set_b)
+    min_size = torch.min(size_a, size_b)
+    return intersection / (min_size + eps)
 
 
 def minhash_jaccard(set_a: Tensor, set_b: Tensor) -> Tensor:
@@ -309,3 +259,100 @@ def stopwatch() -> Callable[..., float]:
         return perf_counter() - start
 
     return stop
+
+import math
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from torch_geometric.utils import negative_sampling
+
+#------------------------------------------changes------------------------------#
+
+
+
+
+def train_dothash_embedding(edge_index: torch.LongTensor, num_nodes: int, dims: int,
+                            epochs: int = 20, lr: float = 0.01, margin: float = 0.1,
+                            batch_size: int = 1024, device=None, early_stop_patience: int = 5) -> torch.Tensor:
+    """
+    Trains node embeddings φ(x) using ranking-based contrastive learning for DotHash,
+    with support for early stopping.
+
+    Parameters:
+        edge_index (Tensor): Edge list in shape [2, num_edges] where each column is (u, v).
+        num_nodes (int): Total number of nodes in the graph.
+        dims (int): Dimension of each node's embedding vector.
+        epochs (int): Maximum number of training iterations (epochs).
+        lr (float): Learning rate for the Adam optimizer.
+        margin (float): Margin value used in ranking loss between positive and negative pairs.
+        batch_size (int): Number of edge updates processed per batch.
+        device (torch.device): CPU or GPU device to use for training.
+        early_stop_patience (int): Number of consecutive epochs to wait before early stopping
+                                 if loss does not improve.
+
+    Returns:
+        Tensor: Learned DotHash signature vectors (sketches) for each node, shape [num_nodes, dims].
+    """
+
+    # Use given device or infer it from edge_index
+    device = device or edge_index.device
+
+    # Initialize an embedding matrix: φ(x) ∈ ℝ^dims for each node x
+    embedding = nn.Embedding(num_nodes, dims).to(device)
+
+    # Use Adam optimizer (adaptive learning rate) to update embedding vectors
+    optimizer = torch.optim.Adam(embedding.parameters(), lr=lr)
+
+    # Extract positive edge pairs from the graph (edges in edge_index)
+    pos_u, pos_v = edge_index
+
+    # Generate negative edge pairs that do NOT exist in the graph
+    neg_edge_index = negative_sampling(edge_index, num_nodes=num_nodes, num_neg_samples=pos_u.size(0))
+    neg_u, neg_v = neg_edge_index
+
+    # Initialize variables for early stopping
+    best_loss = float('inf')  # Keep track of the lowest loss seen so far
+    epochs_without_improvement = 0  # Counter for how many epochs had no improvement
+
+    # Training loop
+    for epoch in range(epochs):
+        # Reset gradients before each epoch
+        optimizer.zero_grad()
+
+        # Step 1: Generate signature vector for each node by summing its neighbors' embeddings
+        # These are the DotHash sketches used in link prediction
+        signatures = get_node_signatures(edge_index, embedding.weight, batch_size)
+
+        # Step 2: Compute dot product (similarity score) for positive edges
+        pos_score = (signatures[pos_u] * signatures[pos_v]).sum(dim=1)
+
+        # Step 3: Compute dot product for negative edges
+        neg_score = (signatures[neg_u] * signatures[neg_v]).sum(dim=1)
+
+        # Step 4: Ranking-based loss — encourage positive scores to be greater than negative by a margin
+        # If this is already true, loss becomes zero (no update needed)
+        loss = F.relu(margin - (pos_score - neg_score)).mean()
+
+        # Step 5: Print the loss for this epoch for monitoring
+        print(f"Epoch {epoch + 1}/{epochs} | Loss: {loss.item():.4f}")
+
+        # Step 6: Compute gradients and update embeddings
+        loss.backward()
+        optimizer.step()
+
+        # Step 7: Check if the loss improved compared to the best seen so far
+        # We use a small threshold (1e-5) to avoid false triggers from floating point noise
+        if loss.item() < best_loss - 1e-5:
+            best_loss = loss.item()                     # Update best loss
+            epochs_without_improvement = 0              # Reset counter
+        else:
+            epochs_without_improvement += 1             # Count stagnation epochs
+
+        # Step 8: Trigger early stopping if no improvement for N consecutive epochs
+        if epochs_without_improvement >= early_stop_patience:
+            print(f"Early stopping at epoch {epoch + 1} (no improvement for {early_stop_patience} epochs).")
+            break  # Stop training early
+
+    # Final step: Return the final sketch signatures (DotHash-style vectors)
+    return get_node_signatures(edge_index, embedding.weight, batch_size)
